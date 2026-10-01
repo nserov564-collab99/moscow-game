@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
 from flask import Flask, request
 from flask_socketio import SocketIO, emit
@@ -24,7 +27,7 @@ INITIAL_STATS = {"gold": 50, "army": 50, "influence": 50, "lands": 10}
 
 @app.route('/')
 def index():
-    return "Сервер Монополии работает! Подключите интерфейс через Тильду."
+    return "Сервер Монополии работает!"
 
 @socketio.on('join_game')
 def handle_join(data):
