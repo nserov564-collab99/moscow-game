@@ -2,4 +2,4 @@ flask
 flask-socketio
 google-generativeai
 eventlet
-gunicorn
+gunicorn==21.2.0
