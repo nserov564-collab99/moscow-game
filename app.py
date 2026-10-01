@@ -6,6 +6,7 @@ from flask import Flask, request
 from flask_socketio import SocketIO, emit
 import google.generativeai as genai
 import random
+import json
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret-moscow-key!'
@@ -14,7 +15,7 @@ socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
 api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
 game_state = {
     "players": {},
@@ -61,27 +62,33 @@ def handle_roll():
     generate_event(player_id, new_pos)
 
 def generate_event(player_id, position):
-    if not api_key:
-        return
-        
     cell_type = "вопрос"
     if position % 5 == 0 and position != 0: cell_type = "кризис"
     elif position % 7 == 0 and position != 0: cell_type = "шанс"
         
-    prompt = f"""
-    Тема: Возвышение Москвы (XIII - XVI века). Тип: {cell_type}.
-    Если 'вопрос': дай исторический вопрос, 4 варианта ответа (один правильный) и объяснение.
-    Если 'кризис': опиши ситуацию и дай 2 варианта радикального решения.
-    Верни ответ СТРОГО в формате JSON без markdown:
-    {{"type": "{cell_type}", "text": "Текст", "options": ["Вариант 1", "Вариант 2", "Вариант 3", "Вариант 4"], "correct_index": 0, "explanation": "Объяснение"}}
-    """
-    
-    try:
-        response = model.generate_content(prompt)
-        event_data = response.text.replace("```json", "").replace("```", "").strip()
-        emit('trigger_event', {"event": event_data, "player_id": player_id}, broadcast=True)
-    except Exception as e:
-        print("Ошибка ИИ:", e)
+    event_data = {
+        "type": cell_type,
+        "text": "В каком году Москва впервые упоминается в летописях?",
+        "options": ["1147 год", "1237 год", "1380 год", "1480 год"],
+        "correct_index": 0,
+        "explanation": "Москва впервые упоминается в Ипатьевской летописи под 1147 годом."
+    }
+
+    if api_key:
+        prompt = f"""
+        Тема: Возвышение Москвы (XIII - XVI века). Тип: {cell_type}.
+        Дай исторический вопрос, 4 варианта ответа (один правильный) и объяснение.
+        Верни ответ СТРОГО в формате JSON без markdown:
+        {{"type": "{cell_type}", "text": "Текст", "options": ["Вариант 1", "Вариант 2", "Вариант 3", "Вариант 4"], "correct_index": 0, "explanation": "Объяснение"}}
+        """
+        try:
+            response = model.generate_content(prompt)
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            event_data = json.loads(clean_text)
+        except Exception as e:
+            print("Ошибка ИИ, используем резервный вопрос:", e)
+            
+    emit('trigger_event', {"event": json.dumps(event_data), "player_id": player_id}, broadcast=True)
 
 @socketio.on('end_turn')
 def handle_end_turn():
