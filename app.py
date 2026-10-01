@@ -1,5 +1,5 @@
 import eventlet
-eventlet.monkey_patch()
+eventlet.monkey_patch(all=True)
 
 import os
 from flask import Flask, request
@@ -63,32 +63,49 @@ def handle_roll():
 
 def generate_event(player_id, position):
     cell_type = "вопрос"
-    if position % 5 == 0 and position != 0: cell_type = "кризис"
-    elif position % 7 == 0 and position != 0: cell_type = "шанс"
-        
-    event_data = {
-        "type": cell_type,
-        "text": "В каком году Москва впервые упоминается в летописях?",
-        "options": ["1147 год", "1237 год", "1380 год", "1480 год"],
-        "correct_index": 0,
-        "explanation": "Москва впервые упоминается в Ипатьевской летописи под 1147 годом."
-    }
+    if position % 5 == 0 and position != 0: 
+        cell_type = "кризис"
+    elif position % 7 == 0 and position != 0: 
+        cell_type = "шанс"
+    
+    # Пулл качественных резервных вариантов на случай задержки ИИ
+    fallbacks = [
+        {"type": "вопрос", "text": f"Клетка №{position}: Кто был первым уделом Московского княжества?", "options": ["Даниил Александрович", "Иван Калита", "Юрий Долгорукий", "Дмитрий Донской"], "correct_index": 0, "explanation": "Даниил Александрович стал основоположником московской ветви династии Рюриковичей.", "delta": {"gold": 10, "influence": 5}},
+        {"type": "кризис", "text": f"Клетка №{position}: Набег ордынского отряда на приграничные земли. Ваши действия?", "options": ["Откупиться казной (-15 золота)", "Собрать ополчение (-10 дружины)"], "correct_index": 0, "explanation": "Дипломатия и выкуп позволили сохранить людей, но опустошили казну.", "delta": {"gold": -15, "army": -5}},
+        {"type": "шанс", "text": f"Клетка №{position}: Удачный торговый караган прибыл в Москву с ярмарки.", "options": ["Принять дары"], "correct_index": 0, "explanation": "Казна пополнилась за счет пошлин.", "delta": {"gold": 20, "lands": 1}}
+    ]
+    event_data = random.choice([f for f in fallbacks if f["type"] == cell_type] or fallbacks)
 
     if api_key:
         prompt = f"""
-        Тема: Возвышение Москвы (XIII - XVI века). Тип: {cell_type}.
-        Дай исторический вопрос, 4 варианта ответа (один правильный) и объяснение.
+        Ты генератор событий для исторической игры про Возвышение Москвы (XIII-XVI века). 
+        Клетка игрока: {position}, Тип события: {cell_type}.
+        Придумай УНИКАЛЬНОЕ историческое событие, кризис или вопрос, не повторяющийся с другими.
+        Укажи изменение ресурсов (delta), например: {{"gold": 15, "army": -5, "influence": 10, "lands": 1}}.
         Верни ответ СТРОГО в формате JSON без markdown:
-        {{"type": "{cell_type}", "text": "Текст", "options": ["Вариант 1", "Вариант 2", "Вариант 3", "Вариант 4"], "correct_index": 0, "explanation": "Объяснение"}}
+        {{"type": "{cell_type}", "text": "Текст события", "options": ["Вариант 1", "Вариант 2"], "correct_index": 0, "explanation": "Историческая справка", "delta": {{"gold": 10, "army": 0, "influence": 5, "lands": 0}}}}
         """
         try:
             response = model.generate_content(prompt)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             event_data = json.loads(clean_text)
         except Exception as e:
-            print("Ошибка ИИ, используем резервный вопрос:", e)
+            print("Ошибка ИИ, используем резерв:", e)
             
     emit('trigger_event', {"event": json.dumps(event_data), "player_id": player_id}, broadcast=True)
+
+@socketio.on('submit_answer')
+def handle_answer(data):
+    player_id = request.sid
+    delta = data.get('delta', {})
+    
+    if player_id in game_state["players"]:
+        player = game_state["players"][player_id]
+        for stat, val in delta.items():
+            if stat in player["stats"]:
+                player["stats"][stat] = max(0, player["stats"][stat] + val)
+                
+    emit('update_state', game_state, broadcast=True)
 
 @socketio.on('end_turn')
 def handle_end_turn():
